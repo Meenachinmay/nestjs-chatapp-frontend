@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { Box, Button, List, ListItem, Text, Flex } from "@chakra-ui/react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,7 +13,7 @@ const schema = z.object({
 
 type Inputs = z.infer<typeof schema>;
 
-const Chat: React.FC = () => {
+const Chat: React.FC<{ username: string }> = ({ username }) => {
   const {
     handleSubmit,
     control,
@@ -23,25 +23,58 @@ const Chat: React.FC = () => {
     resolver: zodResolver(schema),
   });
 
+  const messageEndRef = useRef<HTMLDivElement>(null);
+
   const [chat, setChat] = React.useState<string[]>([]);
 
+  const scrollToBottom = () => {
+    if (messageEndRef.current) {
+      messageEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
   useEffect(() => {
-    socket.emit("loadMessages", (message: string[]) => {
-      setChat(message);
-    });
+    // Initialize loading previous chat messages from the server
+    socket.emit("loadMessages");
 
-    socket.on("loadMessages", (message: string[]) => {
-      setChat(message);
-    });
+    // Listen for a new array of all chat messages
+    socket.on(
+      "loadMessages",
+      (messages: Array<{ content: string; user?: { username: string } }>) => {
+        const formattedMessages = messages.map((m) =>
+          m.user && m.user.username
+            ? `${m.user.username}: ${m.content}`
+            : m.content
+        );
+        setChat(formattedMessages);
+      }
+    );
 
-    // Listen for new messages from server
-    socket.on("message", (message: string) => {
-      setChat([...chat, message]);
-    });
+    // Listen for new individual chat messages
+    socket.on(
+      "message",
+      (message: { content: string; user?: { username: string } }) => {
+        const formattedMessage =
+          message.user && message.user.username
+            ? `${message.user.username}: ${message.content}`
+            : message.content;
+        setChat((prevChat) => [...prevChat, formattedMessage]);
+      }
+    );
+
+    return () => {
+      socket.off("message");
+      socket.off("loadMessages");
+    };
+  }, []);
+
+  // This useEffect is for auto-scrolling to the most recent message.
+  useEffect(() => {
+    scrollToBottom();
   }, [chat]);
 
   const onSubmit = (data: Inputs) => {
-    socket.emit("message", data.message);
+    socket.emit("message", { content: data.message, username });
     reset({ message: "" });
   };
 
@@ -54,8 +87,8 @@ const Chat: React.FC = () => {
       borderColor="darkgray"
       bg="white"
       align="stretch"
-      textAlign={'start'}
-      flexDir={'column'}
+      textAlign={"start"}
+      flexDir={"column"}
       gap={5}
     >
       <Box
@@ -66,17 +99,16 @@ const Chat: React.FC = () => {
         borderWidth={1}
         borderRadius="md"
         p={2}
-        textColor={'gray.500'}
+        textColor={"gray.500"}
       >
         <List spacing={2}>
           {chat.map((message, index) => (
             <ListItem key={index}>
-              <Text fontFamily="Roboto">
-                {message}
-              </Text>
+              <Text fontFamily="Roboto">{message}</Text>
             </ListItem>
           ))}
         </List>
+        <div ref={messageEndRef}></div>
       </Box>
       <form onSubmit={handleSubmit(onSubmit)}>
         <Box w="100%">
@@ -99,7 +131,7 @@ const Chat: React.FC = () => {
             </Text>
           )}
         </Box>
-        <Box w="100%" margin={5} flex={"row"} textAlign={'center'}>
+        <Box w="100%" margin={5} flex={"row"} textAlign={"center"}>
           <Button
             type="submit"
             colorScheme="gray"
